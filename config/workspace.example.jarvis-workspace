@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "project": null,
+  "panels": {
+    "explorerWidth": 248,
+    "chatWidth": 410,
+    "showExplorer": true,
+    "showChat": true
+  }
+}
