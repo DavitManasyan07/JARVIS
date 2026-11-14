@@ -39,6 +39,8 @@ OpenAI services and the existing Codex installation have separate terms. The JAR
 - [Electron security](https://www.electronjs.org/docs/latest/tutorial/security)
 - [Electron safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)
 - [Electron application packaging](https://www.electronjs.org/docs/latest/tutorial/application-distribution)
+- [Matching Chromium helper selection](https://raw.githubusercontent.com/chromium/chromium/156.0.8078.100/sandbox/linux/suid/client/setuid_sandbox_host.cc)
+- [Matching Chromium helper API query](https://raw.githubusercontent.com/chromium/chromium/156.0.8078.100/sandbox/linux/suid/sandbox.c)
 - [Web Audio API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API)
 - [Microphone capture](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)
 - [OpenAI audio documentation](https://developers.openai.com/api/docs/guides/audio)

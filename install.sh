@@ -68,20 +68,34 @@ if [[ -n "$JARVIS_MISSING" ]]; then
   sudo apt-get install -y libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libgtk-3-0t64 libgbm1 libasound2t64 libxss1
   [[ -z $(ldd "$JARVIS_SOURCE/build/linux-unpacked/jarvis-bin" | awk '/not found/ {print $1}') ]] || fail 'Some shared libraries are still missing.'
 fi
+# A sibling chrome-sandbox takes precedence over CHROME_DEVEL_SANDBOX in Chromium.
+# Link the staged sibling to a compatible, trusted helper instead of exporting an
+# environment variable that the packaged sibling would shadow.
+# shellcheck source=scripts/sandbox-helper.sh
+source "$JARVIS_SOURCE/scripts/sandbox-helper.sh"
 JARVIS_SANDBOX=''
-if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
-  for JARVIS_HELPER in /opt/google/chrome/chrome-sandbox /usr/lib/chromium/chrome-sandbox /usr/share/code/chrome-sandbox; do
-    if [[ -f "$JARVIS_HELPER" && -u "$JARVIS_HELPER" && $(stat -c '%u' "$JARVIS_HELPER") == 0 ]]; then JARVIS_SANDBOX=$JARVIS_HELPER; break; fi
-  done
-  if [[ -z "$JARVIS_SANDBOX" ]]; then
-    fail 'Ubuntu restricts user namespaces and no trusted Chromium sandbox helper is installed. See docs/TROUBLESHOOTING.md. JARVIS will not disable its sandbox.'
+JARVIS_SANDBOX_API=$("$JARVIS_SOURCE/build/linux-unpacked/chrome-sandbox" --get-api) || fail 'Cannot query the packaged Chromium sandbox helper API.'
+[[ "$JARVIS_SANDBOX_API" =~ ^[0-9]+$ ]] || fail 'The packaged Chromium sandbox helper reported an invalid API version.'
+for JARVIS_HELPER in /opt/google/chrome/chrome-sandbox /usr/lib/chromium/chrome-sandbox /usr/share/code/chrome-sandbox; do
+  if JARVIS_SANDBOX=$(jarvis_trusted_sandbox_helper "$JARVIS_HELPER" "$JARVIS_SANDBOX_API"); then break; fi
+  JARVIS_SANDBOX=''
+done
+if [[ -z "$JARVIS_SANDBOX" ]]; then
+  if { [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; } || { [[ -r /proc/sys/kernel/unprivileged_userns_clone ]] && [[ $(cat /proc/sys/kernel/unprivileged_userns_clone) == 0 ]]; }; then
+    fail 'Ubuntu restricts user namespaces and no trusted compatible Chromium sandbox helper is installed. An administrator must provide a matching root-owned helper. See docs/TROUBLESHOOTING.md. JARVIS will not disable its sandbox.'
   fi
+else
+  progress "Use the trusted Chromium sandbox helper (API $JARVIS_SANDBOX_API): $JARVIS_SANDBOX"
 fi
 progress 'Stage the packaged runtime. Existing settings and conversations are preserved.'
 mkdir -p -- "$JARVIS_INSTALL/releases" "$JARVIS_CONFIG_BASE/jarvis" "$JARVIS_BIN" "$(dirname -- "$JARVIS_DESKTOP")"
 chmod 700 -- "$JARVIS_CONFIG_BASE/jarvis"
 JARVIS_STAGE=$(mktemp -d "$JARVIS_INSTALL/releases/release.XXXXXX")
 cp -a -- "$JARVIS_SOURCE/build/linux-unpacked/." "$JARVIS_STAGE/"
+if [[ -n "$JARVIS_SANDBOX" ]]; then
+  rm -f -- "$JARVIS_STAGE/chrome-sandbox"
+  ln -s -- "$JARVIS_SANDBOX" "$JARVIS_STAGE/chrome-sandbox"
+fi
 JARVIS_CODEX=$(command -v codex || true)
 node --input-type=module - "$JARVIS_CONFIG_BASE/jarvis/runtime.json" "$JARVIS_CODEX" <<'JS'
 import fs from 'node:fs';
@@ -93,15 +107,40 @@ fs.renameSync(file + '.tmp', file);
 JS
 JARVIS_LAUNCHER_TMP=$(mktemp "$JARVIS_BIN/.jarvis.XXXXXX")
 {
-  printf '#!/usr/bin/env bash\n# JARVIS-MANAGED launcher, version 1\nset -euo pipefail\nunset ELECTRON_RUN_AS_NODE\n'
+  printf '#!/usr/bin/env bash\n# JARVIS-MANAGED launcher, version 1\nset -euo pipefail\nunset ELECTRON_RUN_AS_NODE ELECTRON_DISABLE_SANDBOX CHROME_DEVEL_SANDBOX\n'
   printf 'JARVIS_RUNTIME=%q\n' "$JARVIS_INSTALL/runtime"
   printf 'JARVIS_LOG_BASE=%q\n' "${XDG_STATE_HOME:-$HOME/.local/state}/jarvis"
-  if [[ -n "$JARVIS_SANDBOX" ]]; then printf 'export CHROME_DEVEL_SANDBOX=%q\n' "$JARVIS_SANDBOX"; fi
+  printf 'JARVIS_SANDBOX_TARGET=%q\n' "$JARVIS_SANDBOX"
+  printf 'JARVIS_SANDBOX_API=%q\n' "$JARVIS_SANDBOX_API"
+  printf 'JARVIS_INSTALLER=%q\n' "$JARVIS_SOURCE/install.sh"
+  declare -f jarvis_trusted_sandbox_helper
   cat <<'LAUNCHER'
+umask 077
 mkdir -p -- "$JARVIS_LOG_BASE"
 # Keep diagnostics bounded. JARVIS itself writes private application diagnostics.
 if [[ -f "$JARVIS_LOG_BASE/launcher.log" ]] && (( $(stat -c %s "$JARVIS_LOG_BASE/launcher.log") > 1048576 )); then mv -f -- "$JARVIS_LOG_BASE/launcher.log" "$JARVIS_LOG_BASE/launcher.previous.log"; fi
-umask 077
+jarvis_launch_failure() {
+  local message=$1 details="Diagnostics: $JARVIS_LOG_BASE/launcher.log"
+  printf 'JARVIS could not start: %s\n%s\nRun: bash "%s"\n' "$message" "$details" "$JARVIS_INSTALLER" >&2
+  printf 'JARVIS startup validation failed: %s\n' "$message" >>"$JARVIS_LOG_BASE/launcher.log"
+  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    if command -v zenity >/dev/null; then
+      nohup setsid -f zenity --error --no-markup --title='JARVIS could not start' --text="$message
+Run the JARVIS installer again.
+$details" </dev/null >/dev/null 2>&1 &
+    elif command -v notify-send >/dev/null; then
+      notify-send --app-name=JARVIS 'JARVIS could not start' "$message. Run the JARVIS installer again. $details" >/dev/null 2>&1 || true
+    fi
+  fi
+  exit 1
+}
+if [[ -n "$JARVIS_SANDBOX_TARGET" ]]; then
+  if ! [[ -L "$JARVIS_RUNTIME/chrome-sandbox" ]] || ! JARVIS_CURRENT_HELPER=$(jarvis_trusted_sandbox_helper "$JARVIS_RUNTIME/chrome-sandbox" "$JARVIS_SANDBOX_API") || [[ "$JARVIS_CURRENT_HELPER" != "$JARVIS_SANDBOX_TARGET" ]]; then
+    jarvis_launch_failure 'The Chromium sandbox helper is missing, unsafe, or incompatible.'
+  fi
+elif { [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] && [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; } || { [[ -r /proc/sys/kernel/unprivileged_userns_clone ]] && [[ $(cat /proc/sys/kernel/unprivileged_userns_clone) == 0 ]]; }; then
+  jarvis_launch_failure 'This system now restricts user namespaces, and no trusted sandbox helper was configured.'
+fi
 nohup setsid -f "$JARVIS_RUNTIME/jarvis-bin" --class=io.jarvis.Desktop --name=io.jarvis.Desktop "$@" </dev/null >>"$JARVIS_LOG_BASE/launcher.log" 2>&1 &
 LAUNCHER
 } > "$JARVIS_LAUNCHER_TMP"

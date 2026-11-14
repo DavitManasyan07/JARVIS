@@ -19,6 +19,22 @@ Date: 14 November 2026. System: Ubuntu 24.04.4 LTS, x86_64, GNOME, X11.
 - The generated-signal visualization remained labeled as a test.
 - Unsafe Markdown and project HTML remained inactive.
 
+## Restart failure and repair
+
+Date: 15 November 2026.
+
+The first validation started from the IDE's inherited security context. It did not establish startup from an independent, unconfined desktop process.
+
+After restart, normal desktop launch failed. Chromium selected the adjacent user-owned `chrome-sandbox` before the configured external helper.
+
+The repaired installation links that adjacent path to the compatible system helper. Both helper API queries returned `1`.
+
+A new launch from an explicitly unconfined process passed. The main process used the normal user account. A sandboxed child had seccomp enabled and `NoNewPrivs` set.
+
+No administrator access or system security changes were necessary. A physical system restart after this repair has not been tested.
+
+Fresh command-line and desktop-entry launches passed in the normal desktop security context after the repair installation. Each test used a new local data directory. The tests checked the visible window, selected project, normal user identity, and active renderer sandbox.
+
 ## Real Codex service
 
 The installed runtime was `codex-cli 0.169.0-alpha.11.1`.
@@ -55,3 +71,13 @@ The editor checks project boundaries and selected file targets. Another process 
 The ASD-STE100 Issue 9 review was a project language review. It was not an independent certification.
 
 Test artifacts are in the ignored `.dev/` folder. They are not included in the installed application or committed to the source repository.
+
+## Codex command restriction in the normal desktop context
+
+A separate real test on 15 November 2026 used the normal desktop security context. Authentication, model discovery, streamed text, and history passed.
+
+The read-only command test failed. Ubuntu blocked namespace operations required by Codex's bubblewrap sandbox. Codex already used the installed `/usr/bin/bwrap`. The test declined the request to run outside the sandbox. The test thread was archived.
+
+The earlier successful command tests inherited the IDE security context. Those results do not establish sandboxed command execution from a normal desktop launch.
+
+The documented system remedy requires an AppArmor policy change. The user prohibited system security changes. No policy was changed, and JARVIS did not weaken the selected Codex permission mode. Text chat and local application features remain available.

@@ -28,7 +28,13 @@ If Node.js is absent or too old, the script obtains a private Node.js 24 runtime
 
 Missing Ubuntu shared libraries require a separate apt operation. The script identifies this operation and requests authorization first.
 
-JARVIS keeps Chromium's security sandbox enabled. A trusted system Chromium sandbox helper can supply sandbox support when Ubuntu restricts user namespaces.
+JARVIS keeps Chromium's security sandbox enabled. The installer can use an existing, compatible system Chromium sandbox helper.
+
+The helper must belong to root and have mode `4755`. All its parent folders must belong to root and prevent other users from changes.
+
+The installer compares the helper API versions. It replaces the staged runtime's helper with a symbolic link to the validated system helper.
+
+This operation does not need administrator access or change the system helper. Without a compatible helper, restricted systems stop with an installation explanation.
 
 ## Connect Codex
 

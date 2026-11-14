@@ -23,13 +23,23 @@ The installer adds only a marked block to `~/.profile`. It preserves existing sh
 
 Do not start JARVIS as root. Do not add `--no-sandbox`.
 
-Ubuntu can restrict unprivileged user namespaces. The installer can use a trusted, root-owned Chromium sandbox helper already present on the computer.
+Ubuntu can restrict unprivileged user namespaces. JARVIS then needs a compatible, root-owned Chromium sandbox helper.
 
-If no helper is available, installation stops with an explanation. A system administrator must provide supported Chromium sandbox facilities.
+A packaged `chrome-sandbox` file takes precedence over `CHROME_DEVEL_SANDBOX`. An environment setting alone does not correct an unconfigured packaged helper.
 
-The installer does not change AppArmor policy or system security settings. A helper from another Chromium build can be incompatible with Electron.
+The installer links the runtime's `chrome-sandbox` to a validated system helper. It checks API compatibility, ownership, permissions, and parent folders.
 
-If diagnostics report a helper API mismatch, obtain a compatible system sandbox helper. Do not disable sandboxing to suppress the error.
+The launcher checks its configured helper before it starts Electron. An invalid helper causes a nonzero exit and an error message.
+
+The error includes the installer command and diagnostic log path. A desktop dialog or notification appears when an available system utility supports it.
+
+If an older installation reports a SUID helper failure, use `bash install.sh` again. The update preserves local data and replaces the packaged helper correctly.
+
+If no compatible helper exists, installation stops. An administrator must provide supported Chromium sandbox facilities before installation can continue.
+
+Do not make user-writable application files setuid. Do not change AppArmor policy or disable the sandbox to suppress the error.
+
+A test started from an IDE can inherit different security permissions. A successful IDE test does not establish that a normal desktop launch works.
 
 ## Codex is disconnected
 
@@ -127,3 +137,11 @@ Reinstallation preserves local data. Removing a local conversation reference doe
 ## Unsupported service forms
 
 Some connected tools request an interactive MCP form. JARVIS shows the request, but it cannot display every external form schema. Decline or cancel an unsupported form. Use a client that supports the required form to continue that operation.
+
+## Codex cannot create its command sandbox
+
+On this computer, Ubuntu blocks the namespace operations that Codex needs for sandboxed commands from a normal desktop session. Text replies, sign-in, and history still work.
+
+A task can report a bubblewrap error or request permission to run outside the sandbox. Do not treat that request as proof that the command succeeded. JARVIS does not automatically weaken the selected permission mode.
+
+The documented system remedy involves an AppArmor policy change. JARVIS has not made this change. See the [official Codex sandbox documentation](https://learn.chatgpt.com/docs/sandboxing) for the platform requirements.
