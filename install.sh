@@ -20,7 +20,7 @@ progress() { printf '\nJARVIS: %s\n' "$*"; }
 [[ ${ID:-} == ubuntu && ${VERSION_ID:-} == 24.04 ]] || fail 'Supported installation target: Ubuntu 24.04 x86_64. Other distributions are not tested.'
 [[ -f "$JARVIS_SOURCE/package-lock.json" ]] || fail 'The dependency lockfile is missing.'
 [[ -f "$JARVIS_SOURCE/package.json" ]] || fail 'The application package is missing.'
-for JARVIS_TOOL in curl tar sha256sum stat readlink; do command -v "$JARVIS_TOOL" >/dev/null || fail "Required utility is missing: $JARVIS_TOOL"; done
+for JARVIS_TOOL in curl tar sha256sum stat readlink setsid; do command -v "$JARVIS_TOOL" >/dev/null || fail "Required utility is missing: $JARVIS_TOOL"; done
 for JARVIS_MANAGED in "$JARVIS_BIN/jarvis" "$JARVIS_DESKTOP"; do
   if [[ -e "$JARVIS_MANAGED" || -L "$JARVIS_MANAGED" ]]; then
     [[ -f "$JARVIS_MANAGED" ]] && rg_marker=$(head -c 4096 -- "$JARVIS_MANAGED") || fail "Conflicting file: $JARVIS_MANAGED"
@@ -102,7 +102,7 @@ mkdir -p -- "$JARVIS_LOG_BASE"
 # Keep diagnostics bounded. JARVIS itself writes private application diagnostics.
 if [[ -f "$JARVIS_LOG_BASE/launcher.log" ]] && (( $(stat -c %s "$JARVIS_LOG_BASE/launcher.log") > 1048576 )); then mv -f -- "$JARVIS_LOG_BASE/launcher.log" "$JARVIS_LOG_BASE/launcher.previous.log"; fi
 umask 077
-nohup "$JARVIS_RUNTIME/jarvis-bin" --class=jarvis --name=jarvis "$@" </dev/null >>"$JARVIS_LOG_BASE/launcher.log" 2>&1 &
+nohup setsid -f "$JARVIS_RUNTIME/jarvis-bin" --class=jarvis --name=jarvis "$@" </dev/null >>"$JARVIS_LOG_BASE/launcher.log" 2>&1 &
 LAUNCHER
 } > "$JARVIS_LAUNCHER_TMP"
 chmod 755 -- "$JARVIS_LAUNCHER_TMP"
