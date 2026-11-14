@@ -111,7 +111,7 @@ node --input-type=module - "$JARVIS_DESKTOP_TMP" "$JARVIS_BIN/jarvis" <<'JS'
 import fs from 'node:fs';
 const [file, launcher] = process.argv.slice(2);
 const quoted = launcher.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('`', '\\`').replaceAll('$', '\\$').replaceAll('%', '%%');
-fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nVersion=1.0\nName=JARVIS\nComment=Desktop workspace for Codex\nExec="${quoted}" %f\nIcon=io.jarvis.Desktop\nTerminal=false\nCategories=Development;Utility;\nStartupNotify=true\nStartupWMClass=jarvis\nX-JARVIS-Managed=true\n`);
+fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nVersion=1.0\nName=JARVIS\nComment=Desktop workspace for Codex\nExec="${quoted}" %f\nIcon=io.jarvis.Desktop\nTerminal=false\nCategories=Development;IDE;\nStartupNotify=true\nStartupWMClass=jarvis\nX-JARVIS-Managed=true\n`);
 JS
 if command -v desktop-file-validate >/dev/null; then desktop-file-validate "$JARVIS_DESKTOP_TMP"; fi
 for JARVIS_SIZE in 16 24 32 48 64 128 256 512; do

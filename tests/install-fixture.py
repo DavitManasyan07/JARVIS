@@ -50,13 +50,18 @@ def main():
     (mocks / "npm").chmod(0o755)
 
     environment = os.environ.copy()
+    original_launcher_dir = str(Path.home() / ".local/bin")
+    inherited_path = os.pathsep.join(
+        part for part in environment["PATH"].split(os.pathsep)
+        if str(Path(part).resolve()) != original_launcher_dir
+    )
     environment.update(
         HOME=str(home),
         XDG_DATA_HOME=str(home / "data"),
         XDG_CONFIG_HOME=str(home / "config"),
         XDG_CACHE_HOME=str(home / "cache"),
         XDG_STATE_HOME=str(home / "state"),
-        PATH=f"{mocks}:{environment['PATH']}",
+        PATH=f"{mocks}:{inherited_path}",
     )
 
     def command(script, *arguments, text=None, check=True):
