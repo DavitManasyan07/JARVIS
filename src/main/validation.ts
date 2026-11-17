@@ -48,6 +48,8 @@ export const settingsPatch = z
     language: z.string().max(12),
     spokenResponses: z.boolean(),
     autoSendTranscript: z.boolean(),
+    microphoneMode: z.enum(["automatic", "push-to-talk"]),
+    speechPauseMs: z.number().int().min(600).max(4000),
     inputDevice: string,
     outputDevice: string,
     volume: z.number().min(0).max(1),

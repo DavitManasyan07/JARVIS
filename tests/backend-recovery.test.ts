@@ -184,3 +184,34 @@ describe("backend recovery with an explicit mock Codex provider", () => {
     expect(f.codex.send).toHaveBeenCalledTimes(2);
   });
 });
+
+it("does not erase a newer draft while a voice turn is starting", async () => {
+  const f = fixture();
+  f.store.update(f.id, { draft: "Voice request" });
+  f.codex.send.mockImplementationOnce(async () => {
+    f.store.update(f.id, {
+      draft: "Typed while the voice request was starting",
+    });
+    return { turn: { id: "turn-1", status: "inProgress" } };
+  });
+  await f.backend.invoke("chat.send", { id: f.id, text: "Voice request" });
+  expect(f.store.conversation().draft).toBe(
+    "Typed while the voice request was starting",
+  );
+});
+it("clears only the unchanged draft that was actually submitted", async () => {
+  const f = fixture();
+  f.store.update(f.id, { draft: "Submitted request" });
+  await f.backend.invoke("chat.send", { id: f.id, text: "Submitted request" });
+  expect(f.store.conversation().draft).toBe("");
+});
+
+it("preserves a new draft even when it repeats the request currently starting", async () => {
+  const f = fixture();
+  f.codex.send.mockImplementationOnce(async () => {
+    f.store.update(f.id, { draft: "Repeated words" });
+    return { turn: { id: "turn-1", status: "inProgress" } };
+  });
+  await f.backend.invoke("chat.send", { id: f.id, text: "Repeated words" });
+  expect(f.store.conversation().draft).toBe("Repeated words");
+});

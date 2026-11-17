@@ -1,5 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Settings } from "./api";
+import { SpeechActivityDetector } from "./speechActivity";
+export interface CaptureOptions<Context = unknown> {
+  mode?: "automatic" | "push-to-talk";
+  context?: Context;
+}
+interface CaptureSession<Context> {
+  generation: number;
+  mode: "automatic" | "push-to-talk";
+  context?: Context;
+  language: string;
+  silenceMs: number;
+  detector: SpeechActivityDetector;
+  active: boolean;
+  canceled: boolean;
+  finishRequested: boolean;
+  transcribing: boolean;
+  media?: MediaStream;
+  source?: MediaStreamAudioSourceNode;
+  analyser?: AnalyserNode;
+  recorder?: MediaRecorder;
+  samples: Float32Array<ArrayBuffer>;
+  interval?: ReturnType<typeof setInterval>;
+  noSpeechTimer?: ReturnType<typeof setTimeout>;
+  maxTimer?: ReturnType<typeof setTimeout>;
+}
 export function rms(values: Uint8Array) {
   let sum = 0;
   for (const v of values) sum += ((v - 128) / 128) ** 2;
@@ -13,13 +38,19 @@ export function speechText(text: string) {
     .replace(/[#*_`>|]/g, "")
     .slice(0, 3500);
 }
-export default function useAudio(
+export default function useAudio<Context = unknown>(
   settings: Settings,
-  onTranscript: (text: string) => void,
+  onTranscript: (text: string, context?: Context) => void,
   onError: (text: string) => void,
 ) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]),
     [recording, setRecording] = useState(false),
+    [starting, setStarting] = useState(false),
+    [captureMode, setCaptureMode] = useState<"automatic" | "push-to-talk">(
+      "automatic",
+    ),
+    [speechDetected, setSpeechDetected] = useState(false),
+    [listeningStatus, setListeningStatus] = useState("Microphone off"),
     [transcribing, setTranscribing] = useState(false),
     [speaking, setSpeaking] = useState(false),
     [fixture, setFixture] = useState(false);
@@ -32,11 +63,10 @@ export default function useAudio(
     outputAnalyser = useRef<AnalyserNode | null>(null),
     stream = useRef<MediaStream | null>(null),
     recorder = useRef<MediaRecorder | null>(null),
-    canceledRecorders = useRef(new WeakSet<MediaRecorder>()),
+    capture = useRef<CaptureSession<Context> | null>(null),
     audio = useRef<HTMLAudioElement | null>(null),
     oscillator = useRef<OscillatorNode | null>(null),
     url = useRef<string | null>(null),
-    timeout = useRef<ReturnType<typeof setTimeout> | null>(null),
     playGeneration = useRef(0),
     recordGeneration = useRef(0),
     outputGain = useRef<GainNode | null>(null),
@@ -107,118 +137,271 @@ export default function useAudio(
     setFixture(false);
     setOutputLevel(0);
   }, []);
+  const releaseInput = (session: CaptureSession<Context>) => {
+    if (session.interval) clearInterval(session.interval);
+    if (session.noSpeechTimer) clearTimeout(session.noSpeechTimer);
+    if (session.maxTimer) clearTimeout(session.maxTimer);
+    session.interval = undefined;
+    session.noSpeechTimer = undefined;
+    session.maxTimer = undefined;
+    for (const track of session.media?.getTracks() || []) {
+      track.onended = null;
+      track.stop();
+    }
+    session.source?.disconnect();
+    session.analyser?.disconnect();
+    if (stream.current === session.media) stream.current = null;
+    if (inputAnalyser.current === session.analyser)
+      inputAnalyser.current = null;
+    session.active = false;
+  };
   const finish = useCallback((cancel = false) => {
-    recordGeneration.current++;
-    if (cancel && recorder.current)
-      canceledRecorders.current.add(recorder.current);
-    if (timeout.current) clearTimeout(timeout.current);
-    if (recorder.current?.state === "recording") recorder.current.stop();
-    stream.current?.getTracks().forEach((t) => t.stop());
-    stream.current = null;
-    inputAnalyser.current?.disconnect();
-    inputAnalyser.current = null;
+    const session = capture.current;
+    if (!session) return;
+    if (cancel) {
+      session.canceled = true;
+      recordGeneration.current++;
+      // Dispatch cancellation before a later start can create a new request.
+      // Old onstop/catch handlers never cancel requests belonging to a new capture.
+      if (session.transcribing) void api("voice.cancel").catch(() => {});
+    } else if (session.finishRequested) return;
+    else if (!session.detector.speechDetected) {
+      session.canceled = true;
+      recordGeneration.current++;
+      setListeningStatus("No speech detected · nothing sent");
+      callbacks.current.onError(
+        "No speech detected. Recording canceled; nothing sent.",
+      );
+    } else session.finishRequested = true;
+    releaseInput(session);
+    setStarting(false);
     setRecording(false);
     setInputLevel(0);
     setBars(Array(32).fill(0));
-  }, []);
-  const start = useCallback(async () => {
-    if (recorder.current?.state === "recording") return;
-    stopSpeech();
-    const generation = ++recordGeneration.current;
-    try {
-      const requested = settingsRef.current.inputDevice;
-      const available = await navigator.mediaDevices.enumerateDevices();
-      const input =
-        requested &&
-        requested !== "default" &&
-        available.some(
-          (d) => d.kind === "audioinput" && d.deviceId === requested,
-        )
-          ? requested
-          : undefined;
-      if (requested && requested !== "default" && !input)
-        callbacks.current.onError(
-          "The selected microphone is unavailable. Recording uses the system default.",
-        );
-      const media = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          ...(input ? { deviceId: { exact: input } } : {}),
-          echoCancellation: settingsRef.current.echoCancellation !== false,
-          noiseSuppression: settingsRef.current.noiseSuppression !== false,
-        },
-        video: false,
-      });
-      if (generation !== recordGeneration.current) {
-        media.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      stream.current = media;
-      await refresh();
-      const ac = await context(),
-        source = ac.createMediaStreamSource(media),
-        analyser = ac.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.7;
-      source.connect(analyser);
-      inputAnalyser.current = analyser;
-      const mime = ["audio/webm;codecs=opus", "audio/webm"].find((m) =>
-        MediaRecorder.isTypeSupported(m),
-      );
-      if (generation !== recordGeneration.current) {
-        media.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      const rec = new MediaRecorder(media, mime ? { mimeType: mime } : {});
-      recorder.current = rec;
-      const pieces: Blob[] = [];
-      rec.ondataavailable = (e) => {
-        if (e.data.size) pieces.push(e.data);
-      };
-      rec.onstop = async () => {
-        if (canceledRecorders.current.has(rec)) {
-          pieces.length = 0;
-          return;
-        }
-        setTranscribing(true);
-        try {
-          const blob = new Blob(pieces, { type: rec.mimeType });
-          pieces.length = 0;
-          if (!blob.size) throw new Error("The recording contains no audio.");
-          const data = Array.from(new Uint8Array(await blob.arrayBuffer()));
-          const result = await api("voice.transcribe", {
-            data,
-            mime: rec.mimeType,
-            language: settingsRef.current.language || undefined,
-          });
-          callbacks.current.onTranscript(result.text);
-        } catch (e) {
-          callbacks.current.onError(String((e as Error).message || e));
-        } finally {
-          setTranscribing(false);
-        }
-      };
-      media.getAudioTracks()[0].onended = () => {
-        finish(true);
-        callbacks.current.onError(
-          "The microphone was disconnected. Recording was canceled.",
-        );
-        void refresh();
-      };
-      rec.start(250);
-      setRecording(true);
-      timeout.current = setTimeout(() => finish(false), 60000);
-    } catch (e) {
-      finish(true);
-      const err = e as DOMException;
+    if (session.canceled) {
+      setTranscribing(false);
+      setSpeechDetected(false);
+      if (cancel) setListeningStatus("Recording canceled · nothing sent");
+      capture.current = null;
+    } else {
+      setTranscribing(true);
+      setListeningStatus("Transcribing your speech");
+    }
+    if (session.recorder?.state === "recording") session.recorder.stop();
+    else if (!session.canceled) {
+      session.canceled = true;
+      capture.current = null;
+      setTranscribing(false);
       callbacks.current.onError(
-        err.name === "NotFoundError"
-          ? "No microphone available. Connect a microphone, then try again."
-          : err.name === "NotAllowedError"
-            ? "Microphone access was denied. Check your desktop privacy settings."
-            : `Cannot start microphone: ${err.message}`,
+        "Recording could not be completed. Nothing was sent.",
       );
     }
-  }, [finish, refresh, stopSpeech]);
+  }, []);
+  const start = useCallback(
+    async (options: CaptureOptions<Context> = {}) => {
+      if (capture.current?.active) return;
+      if (capture.current) finish(true);
+      stopSpeech();
+      const generation = ++recordGeneration.current;
+      const session: CaptureSession<Context> = {
+        generation,
+        mode: options.mode || "automatic",
+        context: options.context,
+        language: settingsRef.current.language || "",
+        silenceMs: settingsRef.current.speechPauseMs || 1200,
+        detector: new SpeechActivityDetector(performance.now(), {
+          silenceMs: settingsRef.current.speechPauseMs || 1200,
+        }),
+        active: true,
+        canceled: false,
+        finishRequested: false,
+        transcribing: false,
+        samples: new Float32Array(2048),
+      };
+      capture.current = session;
+      setStarting(true);
+      setCaptureMode(session.mode);
+      setSpeechDetected(false);
+      setTranscribing(false);
+      setListeningStatus("Opening microphone");
+      const currentSession = () =>
+        capture.current === session &&
+        !session.canceled &&
+        generation === recordGeneration.current;
+      try {
+        const requested = settingsRef.current.inputDevice;
+        const available = await navigator.mediaDevices.enumerateDevices();
+        if (!currentSession()) return;
+        const input =
+          requested &&
+          requested !== "default" &&
+          available.some(
+            (d) => d.kind === "audioinput" && d.deviceId === requested,
+          )
+            ? requested
+            : undefined;
+        if (requested && requested !== "default" && !input)
+          callbacks.current.onError(
+            "The selected microphone is unavailable. Recording uses the system default.",
+          );
+        const media = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            ...(input ? { deviceId: { exact: input } } : {}),
+            echoCancellation: settingsRef.current.echoCancellation !== false,
+            noiseSuppression: settingsRef.current.noiseSuppression !== false,
+          },
+          video: false,
+        });
+        session.media = media;
+        if (!currentSession()) {
+          releaseInput(session);
+          return;
+        }
+        stream.current = media;
+        await refresh();
+        if (!currentSession()) {
+          releaseInput(session);
+          return;
+        }
+        const ac = await context();
+        if (!currentSession()) {
+          releaseInput(session);
+          return;
+        }
+        const source = ac.createMediaStreamSource(media),
+          analyser = ac.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.7;
+        source.connect(analyser);
+        session.source = source;
+        session.analyser = analyser;
+        inputAnalyser.current = analyser;
+        // Timers start after capture is ready, not while a permission prompt is open.
+        session.detector = new SpeechActivityDetector(performance.now(), {
+          silenceMs: session.silenceMs,
+        });
+        const mime = ["audio/webm;codecs=opus", "audio/webm"].find((m) =>
+          MediaRecorder.isTypeSupported(m),
+        );
+        const rec = new MediaRecorder(media, mime ? { mimeType: mime } : {});
+        session.recorder = rec;
+        recorder.current = rec;
+        const pieces: Blob[] = [];
+        rec.ondataavailable = (e) => {
+          if (!session.canceled && e.data.size) pieces.push(e.data);
+        };
+        rec.onerror = () => {
+          if (!currentSession()) return;
+          finish(true);
+          callbacks.current.onError(
+            "Microphone recording failed. Nothing was sent.",
+          );
+        };
+        rec.onstop = async () => {
+          if (
+            !currentSession() ||
+            !session.finishRequested ||
+            !session.detector.speechDetected
+          ) {
+            pieces.length = 0;
+            return;
+          }
+          session.transcribing = true;
+          try {
+            const blob = new Blob(pieces, { type: rec.mimeType });
+            pieces.length = 0;
+            if (!blob.size) throw new Error("The recording contains no audio.");
+            const data = Array.from(new Uint8Array(await blob.arrayBuffer()));
+            if (!currentSession()) return;
+            const result = await api("voice.transcribe", {
+              data,
+              mime: rec.mimeType,
+              language: session.language || undefined,
+            });
+            if (!currentSession()) return;
+            const text = String(result.text || "").trim();
+            if (!text)
+              throw new Error(
+                "No speech transcript was returned. Nothing was sent.",
+              );
+            setListeningStatus("Transcript ready");
+            callbacks.current.onTranscript(text, session.context);
+          } catch (e) {
+            if (currentSession()) {
+              setListeningStatus("Transcription failed");
+              callbacks.current.onError(String((e as Error).message || e));
+            }
+          } finally {
+            session.transcribing = false;
+            if (currentSession()) {
+              setTranscribing(false);
+              setSpeechDetected(false);
+              capture.current = null;
+            }
+          }
+        };
+        media.getAudioTracks()[0].onended = () => {
+          if (!currentSession()) return;
+          finish(true);
+          callbacks.current.onError(
+            "The microphone was disconnected. Recording was canceled; nothing sent.",
+          );
+          void refresh();
+        };
+        const inspect = () => {
+          if (!currentSession() || !session.active || !session.analyser) return;
+          session.analyser.getFloatTimeDomainData(session.samples);
+          const activity = session.detector.update(
+            session.samples,
+            performance.now(),
+          );
+          setInputLevel(Math.min(1, activity.level * 3));
+          setSpeechDetected(activity.speechDetected);
+          setListeningStatus(
+            activity.speechDetected
+              ? session.mode === "automatic"
+                ? "Listening · pause to send"
+                : "Listening · release to transcribe"
+              : "Waiting for speech",
+          );
+          if (activity.action === "no-speech") {
+            finish(false);
+            return;
+          }
+          if (session.mode === "automatic" && activity.action === "finish")
+            finish(false);
+        };
+        rec.start(250);
+        setStarting(false);
+        setRecording(true);
+        setListeningStatus("Waiting for speech");
+        // Capture control must keep running while RAF or the window is hidden.
+        session.interval = setInterval(inspect, 40);
+        session.noSpeechTimer = setTimeout(() => {
+          if (currentSession() && !session.detector.speechDetected)
+            finish(false);
+        }, 8000);
+        session.maxTimer = setTimeout(() => {
+          if (currentSession()) finish(false);
+        }, 60000);
+      } catch (e) {
+        if (!currentSession()) {
+          releaseInput(session);
+          return;
+        }
+        finish(true);
+        const err = e as DOMException;
+        callbacks.current.onError(
+          err.name === "NotFoundError"
+            ? "No microphone available. Connect a microphone, then try again."
+            : err.name === "NotAllowedError"
+              ? "Microphone access was denied. Check your desktop privacy settings."
+              : `Cannot start microphone: ${err.message}`,
+        );
+      }
+    },
+    [finish, refresh, stopSpeech],
+  );
   const route = async (ac: AudioContext) => {
     if ("setSinkId" in ac) {
       const sink = settingsRef.current.outputDevice;
@@ -246,6 +429,7 @@ export default function useAudio(
         if (generation !== playGeneration.current) return;
         const ac = await context();
         await route(ac);
+        if (generation !== playGeneration.current) return;
         const player = new Audio();
         audio.current = player;
         url.current = URL.createObjectURL(
@@ -267,8 +451,11 @@ export default function useAudio(
         gain.connect(analyser);
         analyser.connect(ac.destination);
         outputAnalyser.current = analyser;
-        player.onended = stopSpeech;
+        player.onended = () => {
+          if (audio.current === player) stopSpeech();
+        };
         player.onerror = () => {
+          if (generation !== playGeneration.current) return;
           stopSpeech();
           callbacks.current.onError(
             "Audio playback failed. The written response is available.",
@@ -277,6 +464,7 @@ export default function useAudio(
         await player.play();
         setSpeaking(true);
       } catch (e) {
+        if (generation !== playGeneration.current) return;
         stopSpeech();
         callbacks.current.onError(
           `Speech unavailable: ${(e as Error).message}`,
@@ -330,9 +518,6 @@ export default function useAudio(
       if (time - last < 60 || document.hidden) return;
       last = time;
       if (inputAnalyser.current) {
-        const values = new Uint8Array(inputAnalyser.current.fftSize);
-        inputAnalyser.current.getByteTimeDomainData(values);
-        setInputLevel(rms(values));
         const frequency = new Uint8Array(
           inputAnalyser.current.frequencyBinCount,
         );
@@ -370,6 +555,10 @@ export default function useAudio(
   return {
     devices,
     recording,
+    starting,
+    captureMode,
+    speechDetected,
+    listeningStatus,
     transcribing,
     speaking,
     fixture,

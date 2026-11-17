@@ -72,6 +72,12 @@ try {
       method,
       args,
     });
+  // Explicit no-device fixture, independent of devices attached to the host.
+  await page.evaluate(() => {
+    navigator.mediaDevices.enumerateDevices = async () => [];
+    navigator.mediaDevices.dispatchEvent(new Event("devicechange"));
+  });
+  await page.getByText("No microphone available", { exact: false }).waitFor();
   const boot = await invoke("bootstrap");
   assert.equal(boot.project, null);
   assert.equal(boot.voice.configured, false);
@@ -238,6 +244,16 @@ try {
     .click();
   await page.getByRole("button", { name: "Close settings" }).click();
   // Explicit generated microphone/device fixture: no physical recording or provider call.
+  // Explicit session-only fixture credential; this test cancels before any upload.
+  await invoke("voice.configure", {
+    key: "explicit-e2e-fixture-not-a-provider-key",
+    remember: false,
+  });
+  await invoke("settings.update", {
+    patch: { microphoneMode: "push-to-talk" },
+  });
+  await page.reload();
+  await page.waitForSelector(".app-shell");
   await page.evaluate(() => {
     const label = document.createElement("div");
     label.id = "audio-fixture-label";

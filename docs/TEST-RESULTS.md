@@ -56,11 +56,37 @@ These checks passed:
 
 The interruption result confirmed the turn status. It did not confirm termination of all background subprocesses.
 
+## Automatic microphone messages
+
+Date: 17 November 2026.
+
+Formatting and TypeScript checks passed. The unit and integration suites passed 68 tests in 11 files. The general packaged suite passed 14 checks.
+
+The packaged microphone suite passed 10 checks from an unconfined desktop security context. It used generated PCM samples, actual MediaRecorder capture, and production IPC.
+
+Speech recognition and Codex used explicit test providers. No physical microphone was captured. No external speech service or real provider key was used.
+
+These checks passed:
+
+- Missing audio credentials prevent capture and upload.
+- One microphone click records a generated signal. A silence pause ends capture and sends exactly one transcript.
+- A short pause remains in the same recording.
+- No-speech timeout and recording cancellation prevent upload.
+- Existing drafts prevent automatic recording.
+- Conversation changes preserve the original message destination.
+- Draft changes during transcription retain both texts for review.
+- Canceled transcription ignores a late provider result.
+- Ctrl+Space retains manual transcript review.
+
+Automatic microphone replies remained written. The suite recorded zero synthesis requests, including when the general spoken-response setting was enabled.
+
+These results verify application behavior with fixtures. They do not establish physical recording quality, speech-recognition accuracy, or live audio-provider access.
+
 ## Limits of the tests
 
-Physical microphone and speaker tests were not performed. The specified computer has no audio hardware.
+Physical microphone and speaker tests were not performed during initial validation. Audio hardware was unavailable at that time.
 
-Live speech recognition and synthesis were not performed. A separate OpenAI audio API key was not supplied. Documented provider request formats, failures, cancellation, and audio samples were tested with explicit fixtures.
+Live speech recognition and synthesis have not been verified. Initial validation had no separate OpenAI audio API key. Provider request formats, failures, cancellation, and audio samples were tested with explicit fixtures.
 
 Codex authentication was available. Authenticated Codex tests were not blocked.
 
@@ -81,3 +107,7 @@ The read-only command test failed. Ubuntu blocked namespace operations required 
 The earlier successful command tests inherited the IDE security context. Those results do not establish sandboxed command execution from a normal desktop launch.
 
 The documented system remedy requires an AppArmor policy change. The user prohibited system security changes. No policy was changed, and JARVIS did not weaken the selected Codex permission mode. Text chat and local application features remain available.
+
+The ten voice-flow checks also passed against the installed runtime in the normal desktop security context. Fresh command-line and desktop-entry launches passed after the update.
+
+The installed user preferences select Automatic microphone mode, a 1.2-second pause, and no spoken responses. Other preferences and the audio-key files were preserved. These tests did not use physical microphone input or a paid audio provider.

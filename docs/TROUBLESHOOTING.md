@@ -97,6 +97,39 @@ If the device does not appear, examine the operating system's Sound settings. De
 
 If a device is removed during recording, cancel the recording. Connect or select a device before the next recording.
 
+## A microphone message does not send
+
+1. Make sure that a conversation is open.
+2. Examine the Codex connection status.
+3. Examine the audio API key status in **Settings → Voice**.
+4. Select **Automatic** microphone mode for sending after a pause.
+5. Start a recording.
+6. Examine the input level while you speak.
+7. Read any displayed transcription error.
+
+A recording with no detected speech is canceled after eight seconds. It is not uploaded. A quiet microphone can require a different input device or system input level.
+
+The pause timer starts after speech is detected. **Pause before sending** defaults to 1.2 seconds. The maximum recording time is 60 seconds.
+
+**Ctrl+Space** uses manual push-to-talk behavior. After release, review the transcript and select **Send**, unless **Send manual transcripts automatically** is enabled.
+
+A busy conversation or existing draft blocks automatic recording. Send or clear the draft before another automatic message.
+
+A conversation change does not redirect a recording. Examine the conversation that was selected when recording started.
+
+If another task starts or a draft changes during transcription, the transcript is kept for review. It is not sent automatically again.
+
+The audio API key and Codex sign-in are separate requirements. A successful Codex sign-in does not establish transcription access.
+
+JARVIS does not automatically repeat a failed audio request. The error remains visible so you can decide whether to record again.
+
+## JARVIS replies with speech
+
+1. Open **Settings → Voice**.
+2. Turn **Speak assistant responses** off.
+
+Automatic microphone messages always use written replies. This setting also keeps other replies written. The audio provider key is preserved.
+
 ## There is no speech output
 
 1. Examine **Settings → Voice**.

@@ -577,7 +577,10 @@ export class Backend {
             settings.model || undefined,
           );
           this.store.update(a.id, {
-            draft: "",
+            ...(conversation.draft === a.text &&
+            this.store.conversation(a.id).draft === a.text
+              ? { draft: "" }
+              : {}),
             ...(conversation.title === "New conversation"
               ? { title: a.text.slice(0, 70) }
               : {}),

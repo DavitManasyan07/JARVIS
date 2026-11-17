@@ -79,18 +79,50 @@ The application reports interruption state separately from confirmed process ter
 
 ## Voice input
 
-The microphone is off at startup. Push-to-talk operation requires a deliberate user action. Continuous recording and wake-word operation are not enabled.
+The microphone is off at startup. Recording starts only after a microphone-button action or the push-to-talk keyboard control.
 
-1. Connect a microphone.
-2. Select the microphone in **Settings → Input**.
-3. Press the microphone control to start recording.
-4. Speak your message.
-5. Press the control again to stop recording.
-6. Examine the recognized transcript.
-7. Correct the transcript when necessary.
-8. Select **Send**.
+**Automatic** is the default microphone-button mode. It detects a pause after speech and sends the recognized text without **Enter**.
 
-Use the visible cancel control to discard a recording. Automatic transcript sending is an optional setting.
+1. Open a project and a conversation.
+2. Connect a microphone.
+3. Select the device in **Settings → Input**.
+4. Configure the separate audio API key in **Settings → Voice**, if necessary.
+5. Select the microphone button.
+6. Speak your message.
+7. Pause after your last word.
+
+The selected silence pause ends the recording after speech. **Pause before sending** defaults to 1.2 seconds and permits 0.6 to 4 seconds.
+
+JARVIS then requests transcription and sends the transcript. No Enter key action is necessary.
+
+The sent transcript remains visible in the conversation. Automatic microphone messages receive text-only replies. They do not start synthesized speech.
+
+If no speech is detected for eight seconds, recording is canceled. That recording is not uploaded. A recording cannot exceed 60 seconds.
+
+Use **Escape** or the visible cancel control to discard a recording. No continuous recording or wake word is enabled.
+
+The conversation selected when recording starts receives the message. Changing conversations does not redirect it. If no conversation is open, JARVIS creates one in the current project.
+
+Automatic recording requires a configured audio key and an available, signed-in Codex connection. A busy conversation or existing draft must be resolved first.
+
+If a draft changes or the conversation becomes busy during transcription, JARVIS appends the transcript for review. It does not retry sending automatically.
+
+### Review a transcript before sending
+
+**Manual** permits transcript review. Select it under **Settings → Voice → Microphone button** to finish button recordings with a second press.
+
+Keep **Send manual transcripts automatically** off when you need to correct the transcript.
+
+1. Hold **Ctrl+Space**.
+2. Speak your message.
+3. Release **Ctrl+Space**.
+4. Examine the recognized transcript.
+5. Correct the transcript when necessary.
+6. Select **Send**.
+
+The keyboard control keeps this release-to-finish behavior in either microphone-button mode. The **Send manual transcripts automatically** setting can send manual transcripts immediately.
+
+That manual automatic-transcript setting is off by default. Automatic microphone-button mode sends after the pause regardless of that setting.
 
 The input waveform uses actual microphone samples. With no input device, it stays flat and shows an unavailable-device status.
 
@@ -98,7 +130,11 @@ The visualization test mode uses generated signals. Its label identifies test op
 
 ## Voice output
 
-Spoken replies use an AI-generated voice. The written response remains available if speech generation or playback fails.
+Spoken responses are off by default. Automatic microphone messages always receive text-only replies. Other messages use the **Speak assistant responses** setting.
+
+Microphone transcription does not require spoken responses. Changing this setting does not remove the configured audio API key.
+
+Optional spoken replies use an AI-generated voice. The written response remains available if speech generation or playback fails.
 
 JARVIS sends selected assistant reply text for synthesis. It removes code blocks and common credential patterns before this request.
 
@@ -110,15 +146,15 @@ The application stops output before microphone capture to reduce acoustic feedba
 
 ## Settings
 
-| Group            | Function                                                                                     |
-| ---------------- | -------------------------------------------------------------------------------------------- |
-| General          | Startup workspace, session restoration, appearance, text size, animation, and reduced motion |
-| Codex            | Connection, sign-in, runtime version, discovered models, and diagnostics                     |
-| Voice            | Provider key, voice, playback speed, language, spoken responses, and transcript sending      |
-| Input            | Microphone, real input level, echo cancellation, and noise suppression                       |
-| Output           | Available output devices, volume, and playback test                                          |
-| Privacy and data | Data locations, conversation export and retention information       |
-| Permissions      | Read-only access, workspace access, and Full access                                          |
+| Group            | Function                                                                                                               |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| General          | Startup workspace, session restoration, appearance, text size, animation, and reduced motion                           |
+| Codex            | Connection, sign-in, runtime version, discovered models, and diagnostics                                               |
+| Voice            | Provider key, microphone mode, pause, voice, playback speed, language, spoken responses, and manual transcript sending |
+| Input            | Microphone, real input level, echo cancellation, and noise suppression                                                 |
+| Output           | Available output devices, volume, and playback test                                                                    |
+| Privacy and data | Data locations, conversation export and retention information                                                          |
+| Permissions      | Read-only access, workspace access, and Full access                                                                    |
 
 Panel widths and window position remain available after restart. The View menu can close or open the side panels.
 

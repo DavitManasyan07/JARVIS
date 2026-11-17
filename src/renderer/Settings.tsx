@@ -32,6 +32,7 @@ export default function Settings({
   close,
   refresh,
   onError,
+  initialGroup = "General",
 }: {
   settings: SettingsData;
   update(patch: Partial<SettingsData>): Promise<void>;
@@ -42,6 +43,7 @@ export default function Settings({
   close(): void;
   refresh(): Promise<void>;
   onError(text: string): void;
+  initialGroup?: string;
 }) {
   const dialogRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -69,7 +71,7 @@ export default function Settings({
       previous?.focus();
     };
   }, []);
-  const [group, setGroup] = useState("General"),
+  const [group, setGroup] = useState(initialGroup),
     [key, setKey] = useState(""),
     [remember, setRemember] = useState(false),
     [working, setWorking] = useState(false),
@@ -418,17 +420,57 @@ export default function Settings({
                 {check(
                   "spokenResponses",
                   "Speak assistant responses",
-                  "Uses an AI-generated voice. Code blocks and tool logs are excluded.",
+                  "Speak replies to typed and manual voice messages. Automatic voice requests always get text replies.",
                 )}
+                <label className="setting-field">
+                  Microphone button
+                  <select
+                    value={settings.microphoneMode}
+                    onChange={(e) => set("microphoneMode", e.target.value)}
+                  >
+                    <option value="automatic">
+                      Automatic · pause to send · text replies
+                    </option>
+                    <option value="push-to-talk">
+                      Manual · click again to finish
+                    </option>
+                  </select>
+                  <small>
+                    Automatic mode sends your words to the conversation where
+                    you start recording. No Enter key is needed.
+                  </small>
+                </label>
+                <label className="setting-field">
+                  Pause before sending ·{" "}
+                  {(settings.speechPauseMs / 1000).toFixed(1)} seconds
+                  <input
+                    type="range"
+                    min="600"
+                    max="4000"
+                    step="100"
+                    value={settings.speechPauseMs}
+                    disabled={settings.microphoneMode !== "automatic"}
+                    onChange={(e) =>
+                      set("speechPauseMs", Number(e.target.value))
+                    }
+                  />
+                  <small>
+                    {settings.microphoneMode === "automatic"
+                      ? "Use a longer pause if you need more time between phrases."
+                      : "Pause detection is used only in Automatic mode."}
+                  </small>
+                </label>
                 {check(
                   "autoSendTranscript",
-                  "Send the transcript automatically",
-                  "When off, review and edit the transcript in the message composer.",
+                  "Send manual transcripts automatically",
+                  "For Ctrl+Space and manual recording. When off, review the transcript before sending. Automatic mode always sends after a pause.",
                 )}
                 <p className="muted">
-                  Push to talk: hold Ctrl+Space, then release to transcribe. You
-                  can also use the microphone button. Press Escape to cancel
-                  recording.
+                  Click the microphone, speak, then pause to send. The
+                  microphone turns off after each request. Ctrl+Space still
+                  records while held. Press Escape to cancel recording or
+                  transcription. If no speech is detected for 8 seconds, nothing
+                  is sent.
                 </p>
               </>
             )}

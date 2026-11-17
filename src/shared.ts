@@ -20,6 +20,8 @@ export interface Settings {
   language: string;
   spokenResponses: boolean;
   autoSendTranscript: boolean;
+  microphoneMode: "automatic" | "push-to-talk";
+  speechPauseMs: number;
   inputDevice: string;
   outputDevice: string;
   volume: number;
@@ -47,6 +49,8 @@ export const defaults: Settings = {
   language: "",
   spokenResponses: false,
   autoSendTranscript: false,
+  microphoneMode: "automatic",
+  speechPauseMs: 1200,
   inputDevice: "default",
   outputDevice: "default",
   volume: 0.7,

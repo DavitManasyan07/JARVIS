@@ -72,6 +72,14 @@ npm run test:e2e
 npm run test:install
 ```
 
+After installation, use this command for the generated microphone pipeline fixtures:
+
+```bash
+JARVIS_TEST_EXECUTABLE="${XDG_DATA_HOME:-$HOME/.local/share}/jarvis/runtime/jarvis-bin" npm run test:voice
+```
+
+This test uses generated audio and explicit provider fixtures. It does not capture a physical microphone or use real audio credentials.
+
 To apply project formatting, use:
 
 ```bash
@@ -142,7 +150,27 @@ The deprecated `/audio/speech` path is not used. API access for these models mus
 
 Provider requests remain in the desktop process. Credentials do not pass to the renderer. The renderer receives audio data and transcription text.
 
-Capture starts only after an explicit user action. The default transcript path permits correction before a message is sent.
+Capture starts only after an explicit user action. `microphoneMode` selects `automatic` or `push-to-talk`. Its default is `automatic`.
+
+Automatic microphone-button capture waits for detected speech. `speechPauseMs` controls the subsequent silence pause. Its default is 1200 milliseconds; validated limits are 600–4000 milliseconds.
+
+The pause ends capture and starts transcription.
+
+The automatic path sends the transcript without an Enter key event. A no-speech timeout of eight seconds cancels capture without a transcription request.
+
+Every recording has a 60-second limit. Escape, explicit cancellation, and device removal discard capture.
+
+Ctrl+Space retains manual hold-and-release operation. Manual transcripts permit correction by default. The existing `autoSendTranscript` setting controls manual automatic sending.
+
+Automatic capture retains the conversation selected at its start. It creates a local conversation in the open project when necessary.
+
+Missing audio credentials, unavailable Codex authentication, an active task, or an existing draft prevent automatic capture. No recording starts in those cases.
+
+A changed draft or busy target after transcription causes transcript review instead of another automatic send. Conversation changes do not redirect the request.
+
+Automatic microphone requests suppress synthesized replies independently of the general spoken-response setting. `spokenResponses` remains false by default for other requests.
+
+Voice input does not require synthesis or playback. Provider credentials remain separate from these operation settings.
 
 Web Audio analysis uses actual input or playback samples. Generated visualization fixtures remain explicitly labeled as tests.
 
@@ -152,7 +180,7 @@ Mock transports and fixture signals are test inputs. They are not production pro
 
 Authenticated Codex tests require a valid local account and available service. Missing credentials must be reported as a blocked test.
 
-Live microphone and speaker tests were not possible on the specified computer. Device-state and audio-signal fixtures do not verify physical hardware.
+Physical recording and playback were not verified during initial validation. Device-state and audio-signal fixtures do not verify physical hardware.
 
 For an optional authenticated integration test, use:
 

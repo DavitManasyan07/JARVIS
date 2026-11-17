@@ -93,6 +93,13 @@ function fitPanelWidths(
     right: Math.floor(minima.right + extra.right * scale),
   };
 }
+type VoiceTarget = {
+  id: string;
+  project: string;
+  autoSend: boolean;
+  textOnly: boolean;
+};
+
 export default function App() {
   const [settings, setSettings] = useState<SettingsData>(defaults),
     [project, setProject] = useState<string | null>(null),
@@ -106,6 +113,8 @@ export default function App() {
     [bootError, setBootError] = useState("");
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
   const [settingsOpen, setSettingsOpen] = useState(false),
+    [settingsGroup, setSettingsGroup] = useState("General"),
+    [voiceStarting, setVoiceStarting] = useState(false),
     [menu, setMenu] = useState<"file" | "view" | null>(null),
     [notice, setNotice] = useState<{ text: string; error: boolean } | null>(
       null,
@@ -131,10 +140,18 @@ export default function App() {
       activeId,
       histories,
       codex,
+      voice,
+      running,
     }),
     pending = useRef<string | null>(null),
     turnMessages = useRef<Record<string, Record<string, ChatItem>>>({}),
     heldPTT = useRef(false),
+    voiceStartGeneration = useRef(0),
+    voiceStartPending = useRef(false),
+    sending = useRef(new Set<string>()),
+    textOnlyConversations = useRef(new Set<string>()),
+    draftVersions = useRef(new Map<string, number>()),
+    pendingDrafts = useRef(new Map<string, string>()),
     noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   current.current = {
     settings,
@@ -143,6 +160,8 @@ export default function App() {
     activeId,
     histories,
     codex,
+    voice,
+    running,
   };
   const showError = useCallback((text: string) => {
     setNotice({ text, error: true });
@@ -165,7 +184,13 @@ export default function App() {
   );
   const refreshConversations = useCallback(async () => {
     const list = await api<Conversation[]>("conversations.list");
-    setConversations(list);
+    const merged = list.map((c) =>
+      pendingDrafts.current.has(c.id)
+        ? { ...c, draft: pendingDrafts.current.get(c.id)! }
+        : c,
+    );
+    current.current.conversations = merged;
+    setConversations(merged);
   }, []);
   const update = useCallback(
     async (patch: Partial<SettingsData>) => {
@@ -259,77 +284,275 @@ export default function App() {
       void update({ activeConversation: c.id, showChat: true });
     }
   }, [execute, showNotice, update]);
+  const markRunning = useCallback((id: string, value: boolean) => {
+    current.current.running = { ...current.current.running, [id]: value };
+    setRunning((old) => ({ ...old, [id]: value }));
+  }, []);
+  const persistDraft = useCallback(async (id: string, draft: string) => {
+    const revision = (draftVersions.current.get(id) || 0) + 1;
+    draftVersions.current.set(id, revision);
+    pendingDrafts.current.set(id, draft);
+    current.current.conversations = current.current.conversations.map((c) =>
+      c.id === id ? { ...c, draft } : c,
+    );
+    setConversations((old) =>
+      old.map((c) => (c.id === id ? { ...c, draft } : c)),
+    );
+    try {
+      await api("conversations.update", { id, draft });
+    } finally {
+      if (draftVersions.current.get(id) === revision)
+        pendingDrafts.current.delete(id);
+    }
+  }, []);
   const setDraft = useCallback(
     (draft: string) => {
       const id = current.current.activeId;
-      if (!id) return;
-      setConversations((old) =>
-        old.map((c) => (c.id === id ? { ...c, draft } : c)),
-      );
-      void api("conversations.update", { id, draft }).catch((e) =>
-        showError(e.message),
-      );
+      if (id) void persistDraft(id, draft).catch((e) => showError(e.message));
     },
-    [showError],
+    [persistDraft, showError],
   );
-  const send = useCallback(async () => {
-    const id = current.current.activeId,
-      c = current.current.conversations.find((c) => c.id === id);
-    if (!id || !c?.draft.trim() || running[id]) return;
-    const text = c.draft;
-    pending.current = id;
-    setRunning((old) => ({ ...old, [id]: true }));
-    setDraft("");
-    const optimistic = `pending-${Date.now()}`;
-    setHistories((old) => ({
-      ...old,
-      [id]: [...(old[id] || []), { id: optimistic, type: "userMessage", text }],
-    }));
-    try {
-      const result = await api("chat.send", { id, text });
-      setConversations((old) =>
-        old.map((c) => (c.id === id ? { ...c, threadId: result.threadId } : c)),
+  const submitMessage = useCallback(
+    async (id: string, text: string, textOnly = false) => {
+      const conversation = current.current.conversations.find(
+        (c) => c.id === id,
       );
-      void refreshConversations();
-    } catch (e) {
-      setRunning((old) => ({ ...old, [id]: false }));
+      if (!conversation || conversation.archived || !text.trim()) return false;
+      if (current.current.running[id] || sending.current.has(id)) {
+        showError(
+          "This conversation is already working. Your message was not sent.",
+        );
+        return false;
+      }
+      sending.current.add(id);
+      pending.current = id;
+      markRunning(id, true);
+      if (textOnly) textOnlyConversations.current.add(id);
+      const optimistic = "pending-" + Date.now() + "-" + id;
       setHistories((old) => ({
         ...old,
-        [id]: (old[id] || []).filter((i) => i.id !== optimistic),
+        [id]: [
+          ...(old[id] || []),
+          { id: optimistic, type: "userMessage", text },
+        ],
       }));
-      setConversations((old) =>
-        old.map((c) => (c.id === id ? { ...c, draft: text } : c)),
-      );
-      void api("conversations.update", { id, draft: text });
-      showError((e as Error).message);
-    } finally {
-      pending.current = null;
-    }
-  }, [running, setDraft, refreshConversations, showError]);
+      try {
+        if (conversation.draft === text) await persistDraft(id, "");
+        const result = await api("chat.send", { id, text });
+        setConversations((old) =>
+          old.map((c) =>
+            c.id === id ? { ...c, threadId: result.threadId } : c,
+          ),
+        );
+        void refreshConversations().catch((e) => showError(e.message));
+        return true;
+      } catch (e) {
+        markRunning(id, false);
+        setHistories((old) => ({
+          ...old,
+          [id]: (old[id] || []).filter((item) => item.id !== optimistic),
+        }));
+        const existing =
+          current.current.conversations.find((c) => c.id === id)?.draft || "";
+        const recovered =
+          existing.trim() && existing !== text ? text + "\n" + existing : text;
+        await persistDraft(id, recovered).catch(() => {});
+        showError((e as Error).message);
+        return false;
+      } finally {
+        sending.current.delete(id);
+        if (pending.current === id) pending.current = null;
+      }
+    },
+    [markRunning, persistDraft, refreshConversations, showError],
+  );
+  const send = useCallback(async () => {
+    const id = current.current.activeId;
+    const draft = current.current.conversations.find((c) => c.id === id)?.draft;
+    if (id && draft?.trim()) await submitMessage(id, draft);
+  }, [submitMessage]);
   const onTranscript = useCallback(
-    (text: string) => {
-      if (!current.current.activeId) {
-        showNotice(`Transcript: ${text}`);
+    async (value: string, captured?: unknown) => {
+      const text = value.trim();
+      if (!text) {
+        showNotice("No words were recognized. Nothing was sent.");
         return;
       }
-      setDraft(text);
-      showNotice("Transcript ready. Review it in the message composer.");
-      if (current.current.settings.autoSendTranscript)
-        setTimeout(() => void send(), 0);
+      const target = captured as VoiceTarget | undefined;
+      const id = target?.id;
+      const conversation = current.current.conversations.find(
+        (c) => c.id === id,
+      );
+      if (
+        !id ||
+        !conversation ||
+        conversation.archived ||
+        conversation.project !== target?.project
+      ) {
+        showError(
+          "The recording's conversation is unavailable. Nothing was sent. Transcript: " +
+            text,
+        );
+        return;
+      }
+      const busy = current.current.running[id] || sending.current.has(id);
+      if (!target.autoSend || conversation.draft.trim() || busy) {
+        const combined = conversation.draft.trim()
+          ? conversation.draft + "\n" + text
+          : text;
+        await persistDraft(id, combined).catch((e) => showError(e.message));
+        showNotice(
+          busy
+            ? "The conversation is working. Your transcript was saved as a draft; review it before sending."
+            : target.autoSend
+              ? "The draft changed while you spoke. Your transcript was added for review and was not sent."
+              : "Transcript ready. Review it in the conversation before sending.",
+        );
+        return;
+      }
+      if (await submitMessage(id, text, target.textOnly))
+        showNotice(
+          current.current.activeId === id
+            ? "Voice request sent. JARVIS will reply in chat."
+            : "Voice request sent to “" +
+                conversation.title +
+                "”. JARVIS will reply there.",
+        );
     },
-    [setDraft, showNotice, send],
+    [persistDraft, showError, showNotice, submitMessage],
   );
-  const audio = useAudio(settings, onTranscript, showError),
+  const audio = useAudio(
+      settings,
+      (text, context) => {
+        void onTranscript(text, context);
+      },
+      showError,
+    ),
     audioRef = useRef(audio);
   audioRef.current = audio;
-  const stop = useCallback(async () => {
+  const startMicrophone = useCallback(
+    async (mode: "automatic" | "push-to-talk", requireHeld = false) => {
+      if (
+        voiceStartPending.current ||
+        audioRef.current.recording ||
+        audioRef.current.transcribing
+      )
+        return;
+      if (!current.current.voice.configured) {
+        setSettingsGroup("Voice");
+        setSettingsOpen(true);
+        showError(
+          "Add your OpenAI audio API key in Settings → Voice before recording. Text chat remains available.",
+        );
+        return;
+      }
+      if (
+        mode === "automatic" &&
+        (!current.current.codex.connected ||
+          (current.current.codex.requiresOpenaiAuth &&
+            !current.current.codex.account))
+      ) {
+        setSettingsGroup("Codex");
+        setSettingsOpen(true);
+        showError(
+          "Connect and sign in to Codex before starting an automatic voice request.",
+        );
+        return;
+      }
+      const generation = ++voiceStartGeneration.current;
+      voiceStartPending.current = true;
+      setVoiceStarting(true);
+      try {
+        let conversation = current.current.conversations.find(
+          (c) => c.id === current.current.activeId,
+        );
+        if (!conversation) {
+          const folder = current.current.project;
+          if (!folder) {
+            showError("Open a project folder before starting a voice request.");
+            return;
+          }
+          conversation = await api<Conversation>("conversations.create", {
+            project: folder,
+          });
+          current.current.conversations = [
+            conversation,
+            ...current.current.conversations.filter(
+              (c) => c.id !== conversation!.id,
+            ),
+          ];
+          current.current.activeId = conversation.id;
+          setConversations((old) => [
+            conversation!,
+            ...old.filter((c) => c.id !== conversation!.id),
+          ]);
+          setActiveId(conversation.id);
+          setHistories((old) => ({ ...old, [conversation!.id]: [] }));
+          void update({ activeConversation: conversation.id, showChat: true });
+        }
+        if (conversation.archived) {
+          showError("Start a new conversation before recording.");
+          return;
+        }
+        if (
+          mode === "automatic" &&
+          (current.current.running[conversation.id] ||
+            sending.current.has(conversation.id))
+        ) {
+          showError(
+            "Wait for this conversation to finish before starting an automatic voice request.",
+          );
+          return;
+        }
+        if (mode === "automatic" && conversation.draft.trim()) {
+          showError(
+            "Send or clear this conversation's draft before starting an automatic voice request.",
+          );
+          return;
+        }
+        if (
+          generation !== voiceStartGeneration.current ||
+          (requireHeld && !heldPTT.current)
+        )
+          return;
+        const target: VoiceTarget = {
+          id: conversation.id,
+          project: conversation.project,
+          autoSend:
+            mode === "automatic" || current.current.settings.autoSendTranscript,
+          textOnly: mode === "automatic",
+        };
+        await audioRef.current.start({ mode, context: target });
+      } catch (e) {
+        showError((e as Error).message);
+      } finally {
+        if (generation === voiceStartGeneration.current) {
+          voiceStartPending.current = false;
+          setVoiceStarting(false);
+        }
+      }
+    },
+    [showError, update],
+  );
+  const cancelCapture = useCallback(() => {
+    voiceStartGeneration.current++;
+    voiceStartPending.current = false;
+    heldPTT.current = false;
+    setVoiceStarting(false);
     audioRef.current.finish(true);
+  }, []);
+  const startMicrophoneRef = useRef(startMicrophone);
+  startMicrophoneRef.current = startMicrophone;
+  const cancelCaptureRef = useRef(cancelCapture);
+  cancelCaptureRef.current = cancelCapture;
+  const stop = useCallback(async () => {
+    cancelCapture();
     audioRef.current.stopSpeech();
     const id = current.current.activeId;
     if (!id) return;
     const result = await execute(() => api("chat.stop", { id }));
     if (result) showNotice(result.message || JSON.stringify(result));
-  }, [execute, showNotice]);
+  }, [cancelCapture, execute, showNotice]);
   const refresh = useCallback(async () => {
     const b = await api("bootstrap");
     setSettings({ ...defaults, ...b.settings });
@@ -440,7 +663,15 @@ export default function App() {
         return;
       }
       if (method === "conversation.updated") {
-        const c = p.conversation || p;
+        const received = p.conversation || p;
+        const c = pendingDrafts.current.has(received.id)
+          ? { ...received, draft: pendingDrafts.current.get(received.id)! }
+          : received;
+        current.current.conversations = current.current.conversations.some(
+          (x) => x.id === c.id,
+        )
+          ? current.current.conversations.map((x) => (x.id === c.id ? c : x))
+          : [c, ...current.current.conversations];
         setConversations((old) =>
           old.some((x) => x.id === c.id)
             ? old.map((x) => (x.id === c.id ? c : x))
@@ -481,11 +712,11 @@ export default function App() {
       }
       if (method === "turn/started") {
         turnMessages.current[turnKey] = {};
-        setRunning((old) => ({ ...old, [id]: true }));
+        markRunning(id, true);
         return;
       }
       if (method === "turn/completed") {
-        setRunning((old) => ({ ...old, [id]: false }));
+        markRunning(id, false);
         setApprovals((old) => ({ ...old, [id]: [] }));
         setHistories((old) => ({
           ...old,
@@ -495,6 +726,7 @@ export default function App() {
         if (error) showError(error.message || JSON.stringify(error));
         if (
           current.current.settings.spokenResponses &&
+          !textOnlyConversations.current.has(id) &&
           p.turn?.status === "completed"
         ) {
           const text = completedSpeechText(
@@ -503,6 +735,7 @@ export default function App() {
           );
           if (text) void audioRef.current.speak(text);
         }
+        textOnlyConversations.current.delete(id);
         delete turnMessages.current[turnKey];
         void refreshConversations().catch(() => {});
         return;
@@ -617,13 +850,19 @@ export default function App() {
         e.preventDefault();
         if (!e.repeat && !audioRef.current.recording) {
           heldPTT.current = true;
-          void audioRef.current.start();
+          void startMicrophoneRef.current("push-to-talk", true);
         }
       }
       if (e.key === "Escape") {
         setMenu(null);
         setSettingsOpen(false);
-        if (audioRef.current.recording) audioRef.current.finish(true);
+        if (
+          audioRef.current.recording ||
+          audioRef.current.transcribing ||
+          audioRef.current.starting ||
+          voiceStartPending.current
+        )
+          cancelCaptureRef.current();
       }
       if ((e.ctrlKey || e.metaKey) && e.key === "o") {
         e.preventDefault();
@@ -637,6 +876,9 @@ export default function App() {
     const up = (e: KeyboardEvent) => {
       if (e.code === "Space" && heldPTT.current) {
         heldPTT.current = false;
+        voiceStartGeneration.current++;
+        voiceStartPending.current = false;
+        setVoiceStarting(false);
         audioRef.current.finish(false);
       }
     };
@@ -1003,21 +1245,43 @@ export default function App() {
                     title={
                       audio.recording
                         ? "Finish and transcribe recording"
-                        : "Record · hold Ctrl+Space to push to talk"
+                        : settings.microphoneMode === "automatic"
+                          ? "Click, speak, then pause to send a text request"
+                          : "Click to record; click again to finish"
                     }
-                    disabled={!inputDevices.length || audio.transcribing}
+                    disabled={
+                      !audio.recording &&
+                      (!inputDevices.length ||
+                        audio.transcribing ||
+                        voiceStarting ||
+                        audio.starting ||
+                        (settings.microphoneMode === "automatic" && isRunning))
+                    }
                     onClick={() =>
-                      audio.recording ? audio.finish(false) : void audio.start()
+                      audio.recording
+                        ? audio.finish(false)
+                        : void startMicrophone(settings.microphoneMode)
                     }
                   >
                     {audio.recording ? <Square size={17} /> : <Mic size={19} />}
                   </button>
-                  {audio.recording && (
+                  {(audio.recording ||
+                    audio.transcribing ||
+                    voiceStarting ||
+                    audio.starting) && (
                     <button
                       className="cancel-recording"
-                      title="Cancel recording"
-                      aria-label="Cancel recording"
-                      onClick={() => audio.finish(true)}
+                      title={
+                        audio.transcribing
+                          ? "Cancel transcription"
+                          : "Cancel recording"
+                      }
+                      aria-label={
+                        audio.transcribing
+                          ? "Cancel transcription"
+                          : "Cancel recording"
+                      }
+                      onClick={cancelCapture}
                     >
                       <X size={16} />
                     </button>
@@ -1025,12 +1289,18 @@ export default function App() {
                 </div>
                 <div className="audio-caption">
                   {audio.recording
-                    ? "Recording · microphone active"
+                    ? audio.captureMode === "push-to-talk" && !heldPTT.current
+                      ? "Recording · click the microphone again to finish"
+                      : audio.listeningStatus
                     : audio.transcribing
-                      ? "Transcribing…"
-                      : inputDevices.length
-                        ? "Microphone off · Ctrl+Space to talk"
-                        : "No microphone available · text chat is ready"}
+                      ? "Transcribing your request…"
+                      : voiceStarting || audio.starting
+                        ? "Preparing microphone…"
+                        : inputDevices.length
+                          ? settings.microphoneMode === "automatic"
+                            ? "Click the microphone, speak, then pause to send"
+                            : "Microphone off · Ctrl+Space to talk"
+                          : "No microphone available · text chat is ready"}
                   {audio.speaking && (
                     <button onClick={audio.stopSpeech}>Stop speech</button>
                   )}
@@ -1284,6 +1554,7 @@ export default function App() {
       {settingsOpen && (
         <Settings
           settings={settings}
+          initialGroup={settingsGroup}
           update={update}
           codex={codex}
           voice={voice}

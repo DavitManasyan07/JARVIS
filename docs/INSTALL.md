@@ -56,7 +56,7 @@ JARVIS does not install a conflicting global Codex package. It does not change e
 
 Voice uses a separate OpenAI API key. A Codex or ChatGPT subscription does not automatically provide this API access.
 
-Audio requests can cause separate service charges. A recording goes to OpenAI only after you start recording and request transcription.
+Audio requests can cause separate service charges. Recording starts only after a microphone control action. Automatic mode uploads recorded speech for transcription after the pause.
 
 1. Open **Settings**.
 2. Select **Voice**.
@@ -69,7 +69,7 @@ Audio requests can cause separate service charges. A recording goes to OpenAI on
 
 Secure storage requires a working operating-system secret store. JARVIS refuses plaintext persistence when the secret store is unavailable.
 
-Session-only credentials remain in memory until the application exits. Raw microphone recordings are not retained by default.
+Session-only credentials remain in memory until the application exits. Raw microphone recordings are not retained by default. Automatic microphone replies remain written.
 
 ## Update
 

@@ -56,6 +56,24 @@ An existing supported Codex sign-in can be used automatically. JARVIS does not c
 
 The initial permission mode is **Workspace access**. Agent instructions in the project, including applicable `AGENTS.md` files, remain applicable.
 
+## Microphone messages
+
+The microphone button uses **Automatic** mode by default. A separate OpenAI audio API key is required for transcription.
+
+1. Open a project and a conversation.
+2. Configure the audio provider in **Settings → Voice**, if necessary.
+3. Select the microphone button.
+4. Speak your message.
+5. Pause after your last word.
+
+After detected speech, the selected pause ends the recording. The default is 1.2 seconds. JARVIS transcribes and sends without **Enter**.
+
+Automatic microphone replies stay as text. The microphone turns off after each message. Spoken responses are also off by default for other messages.
+
+Hold **Ctrl+Space** for manual recording. Release it to review the transcript. Keep **Send manual transcripts automatically** off for this review.
+
+The microphone button also supports **Manual** mode.
+
 ## Operation without audio hardware
 
 Keep spoken responses off. Use the message composer for all conversations. The input waveform stays inactive when no microphone is available.
